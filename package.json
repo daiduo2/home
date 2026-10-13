@@ -1,11 +1,18 @@
 {
   "name": "home",
   "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "aufheben.top 个人主页 (3D, Vite + Three.js)",
   "scripts": {
-    "build": "mkdir -p dist && cp -r public/* dist/",
-    "start": "npx http-server dist -p 3000"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 3000"
+  },
+  "dependencies": {
+    "three": "^0.169.0"
   },
   "devDependencies": {
-    "http-server": "^14.1.1"
+    "vite": "^5.4.10"
   }
 }
