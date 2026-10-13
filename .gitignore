@@ -1,0 +1,42 @@
+# 环境变量 — 绝不入库
+.env
+.env.local
+.env.*.local
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-error.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# 构建产物
+dist/
+build/
+.next/
+out/
+
+# Docker
+.dockerignore
+
+# 日志
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 部署配置 — 已在仓库里，不需要忽略
+# !deploy/

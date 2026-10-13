@@ -1,0 +1,30 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Deploy to server via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          command_timeout: 8m
+          script: |
+            set -e
+            echo "🚀 Triggered deploy at $(date -u +%FT%TZ)"
+            deploy-app \
+              "${{ secrets.PROJECT_NAME }}" \
+              "${{ secrets.GH_REPO }}" \
+              "${{ secrets.DOMAIN }}" \
+              "${{ secrets.APP_PORT }}" \
+              "${{ secrets.PROJECT_TYPE }}" \
+              "true"
