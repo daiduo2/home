@@ -54,53 +54,121 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASSWORD }}
-          command_timeout: 8m
+          command_timeout: 10m
           script_stop: true
+          envs: DEPLOY_PASSWORD
+          env:
+            DEPLOY_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
           script: |
             set -e
             echo "🚀 部署开始 $(date -u +%FT%TZ)"
+            DOMAIN="aufheben.top"
 
+            # ---------- 提权方式 ----------
+            HAVE_SUDO_N=0
+            if sudo -n true 2>/dev/null; then HAVE_SUDO_N=1; fi
+            as_root() {
+              if [ "$HAVE_SUDO_N" = "1" ]; then
+                sudo -n "$@"
+              elif [ -n "${DEPLOY_PASSWORD:-}" ]; then
+                echo "$DEPLOY_PASSWORD" | sudo -S -p '' "$@"
+              else
+                "$@"
+              fi
+            }
+            if [ "$HAVE_SUDO_N" = "1" ]; then
+              echo "🔑 提权: sudo -n 免密"
+            elif [ -n "${DEPLOY_PASSWORD:-}" ]; then
+              echo "🔑 提权: sudo -S（用 secrets 里的密码）"
+            else
+              echo "🔑 提权: 无 sudo，只能用当前用户权限"
+            fi
+
+            # ---------- 诊断 ----------
+            echo "--- 身份 ---"
+            whoami; id
+            echo "--- nginx 配置里的 root ---"
+            (as_root grep -rn 'root ' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ /etc/nginx/nginx.conf 2>/dev/null | head -10) || true
+            echo "--- nginx -T 里的 root ---"
+            (as_root nginx -T 2>/dev/null | grep -E '^\s*root ' | head -10) || true
+            echo "--- 候选目录 ---"
+            (as_root ls -la /var/www /var/www/home /var/www/home/dist 2>/dev/null | head -40) || true
+
+            # ---------- 定位线上 root ----------
             # 服务器访问 github.com 不稳定（deploy-app 的 git clone 经常 TLS 中断，
             # GnuTLS recv error -110），干脆不让服务器碰 github：产物由 Actions 构建后传上来。
             #
-            # nginx 的 root 从实际配置里读，不写死路径；读不到才回退到约定路径。
-            ROOT=$(grep -rhoP 'root\s+\K[^;]+' /etc/nginx/sites-enabled/ 2>/dev/null | head -1 || true)
-            if [ -z "$ROOT" ]; then
-              echo "⚠️ 没从 nginx 配置里读到 root，回退到 /var/www/home/dist"
-              ROOT=/var/www/home/dist
-            fi
-            echo "📁 目标目录: $ROOT"
+            # root 的定位按可靠度依次尝试：
+            #   1) 让 nginx 自己吐出当前正在服务的页面，从里面取产物文件名，
+            #      再在磁盘上找到这个文件 -> 它所在目录的上级就是 root（最准）
+            #   2) 读 nginx 配置里的 root 指令
+            #   3) 回退到约定路径
+            fetch_live() {
+              if command -v curl >/dev/null 2>&1; then
+                curl -sS -H "Host: $DOMAIN" http://127.0.0.1/ 2>/dev/null || true
+              elif command -v wget >/dev/null 2>&1; then
+                wget -qO- --header="Host: $DOMAIN" http://127.0.0.1/ 2>/dev/null || true
+              fi
+            }
 
-            # 只覆盖不删除：残留的旧 asset 文件无害（index.html 只引用新 hash），
+            LIVE=$(fetch_live)
+            LIVE_ASSET=$(printf '%s' "$LIVE" | grep -oE 'assets/[A-Za-z0-9._-]+\.js' | head -1 || true)
+            echo "🌐 线上当前主产物: ${LIVE_ASSET:-未取到}"
+
+            ROOT=""
+            if [ -n "$LIVE_ASSET" ]; then
+              FOUND=$(as_root find /var/www /home /opt /srv /data /root /usr/share/nginx \
+                -maxdepth 6 -type f -path "*/$LIVE_ASSET" 2>/dev/null | head -1 || true)
+              if [ -n "$FOUND" ]; then
+                ROOT=$(dirname "$(dirname "$FOUND")")
+              fi
+            fi
+            if [ -n "$ROOT" ]; then
+              echo "📁 root（按线上产物反查）: $ROOT"
+            else
+              for d in /etc/nginx/sites-enabled /etc/nginx/conf.d /etc/nginx /usr/local/nginx/conf; do
+                [ -d "$d" ] || continue
+                C=$(as_root grep -rhoE '^[[:space:]]*root[[:space:]]+[^;]+;' "$d" 2>/dev/null \
+                  | sed -E 's/.*root[[:space:]]+([^;]+);/\1/' | grep '^/' | head -1 || true)
+                if [ -n "$C" ]; then ROOT="$C"; break; fi
+              done
+              [ -n "$ROOT" ] && echo "📁 root（按 nginx 配置）: $ROOT"
+            fi
+            if [ -z "$ROOT" ]; then
+              ROOT=/var/www/home/dist
+              echo "⚠️ 前面都没定位到，回退到 $ROOT"
+            fi
+
+            # ---------- 覆盖部署（只覆盖不删除） ----------
+            # 残留的旧 asset 文件无害（index.html 只引用新 hash），
             # 万一路径判断错了，也不会删掉线上正在用的东西
-            mkdir -p "$ROOT"
-            tar -xzf /tmp/dist.tar.gz -C "$ROOT"
+            as_root mkdir -p "$ROOT"
+            as_root tar -xzf /tmp/dist.tar.gz -C "$ROOT"
             rm -f /tmp/dist.tar.gz
             echo "✅ 已更新 $ROOT"
-            ls -la "$ROOT" | head -20
+            (as_root ls -la "$ROOT" | head -20) || true
 
-            # 重载 nginx。sudo 加 -n，不给密码就不会卡在交互提示上
-            if sudo -n nginx -t 2>/dev/null || nginx -t 2>/dev/null; then
+            # ---------- 重载 nginx（静态文件通常不依赖 reload，失败不阻断） ----------
+            if as_root nginx -t 2>/dev/null; then
               echo "nginx 配置检查通过"
             else
-              echo "⚠️ nginx -t 没跑通（可能没有权限），静态文件一般不依赖 reload"
+              echo "⚠️ nginx -t 没跑通（可能没权限），静态文件一般不依赖 reload"
             fi
-            sudo -n systemctl reload nginx 2>/dev/null \
-              || systemctl reload nginx 2>/dev/null \
-              || sudo -n nginx -s reload 2>/dev/null \
-              || nginx -s reload 2>/dev/null \
+            as_root systemctl reload nginx 2>/dev/null \
+              || as_root nginx -s reload 2>/dev/null \
               || echo "⚠️ nginx 重载失败，静态文件通常仍然直接生效"
 
-            # 健康检查：确认线上 index.html 已经引用这次的新产物
-            echo "🌐 健康检查"
-            PAGE=$(curl -sS -H "Host: ${{ secrets.DOMAIN }}" http://127.0.0.1/ || true)
-            if echo "$PAGE" | grep -q "${{ env.ASSET }}"; then
+            # ---------- 健康检查 ----------
+            PAGE=$(fetch_live)
+            if printf '%s' "$PAGE" | grep -q "${{ env.ASSET }}"; then
               echo "✅ 线上 index.html 已引用新产物 ${{ env.ASSET }}"
             else
               echo "⚠️ 线上 index.html 没找到 ${{ env.ASSET }}，回读内容："
-              echo "$PAGE" | head -20
+              printf '%s' "$PAGE" | head -20
             fi
-            curl -sS -o /dev/null -w "  产物直连 -> HTTP %{http_code}\n" \
-              -H "Host: ${{ secrets.DOMAIN }}" \
-              "http://127.0.0.1/assets/${{ env.ASSET }}" || true
+            if command -v curl >/dev/null 2>&1; then
+              curl -sS -o /dev/null -w "  产物直连 -> HTTP %{http_code}\n" \
+                -H "Host: $DOMAIN" \
+                "http://127.0.0.1/assets/${{ env.ASSET }}" || true
+            fi
             echo "✅ 部署完成 $(date -u +%FT%TZ)"
