@@ -50,15 +50,15 @@ jobs:
 
       - name: Deploy to server via SSH
         uses: appleboy/ssh-action@v1
+        env:
+          # 步骤级 env + action 的 envs（传变量名），drone-ssh 会安全地注入到远端脚本
+          DEPLOY_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASSWORD }}
           command_timeout: 10m
-          script_stop: true
           envs: DEPLOY_PASSWORD
-          env:
-            DEPLOY_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
           script: |
             set -e
             echo "🚀 部署开始 $(date -u +%FT%TZ)"
@@ -90,7 +90,7 @@ jobs:
             echo "--- nginx 配置里的 root ---"
             (as_root grep -rn 'root ' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ /etc/nginx/nginx.conf 2>/dev/null | head -10) || true
             echo "--- nginx -T 里的 root ---"
-            (as_root nginx -T 2>/dev/null | grep -E '^\s*root ' | head -10) || true
+            (as_root nginx -T 2>/dev/null | grep -E '^[[:space:]]*root ' | head -10) || true
             echo "--- 候选目录 ---"
             (as_root ls -la /var/www /var/www/home /var/www/home/dist 2>/dev/null | head -40) || true
 
