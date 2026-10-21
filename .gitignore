@@ -24,6 +24,7 @@ out/
 
 # 冒烟测试产物
 tools/smoke-out/
+tools/smoke-out-live/
 
 # Docker
 .dockerignore
