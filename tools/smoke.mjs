@@ -1,0 +1,247 @@
+/**
+ * 冒烟测试：用 Edge headless + CDP 打开站点，验证关键路径。
+ *
+ * 覆盖：
+ *   1. 页面加载无 JS 错误
+ *   2. 加载屏出现「进入场景」按钮，点击后真正进场（title 变化）
+ *   3. 按 W 键角色真的往前走（读物理刚体坐标）
+ *   4. 截图存盘
+ *
+ * 用法：node tools/smoke.mjs [url] [输出目录]
+ */
+
+import { spawn } from 'node:child_process'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
+const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+const TARGET_URL = process.argv[2] || 'http://localhost:3000/'
+const OUT_DIR = process.argv[3] || path.resolve(process.cwd(), 'tools', 'smoke-out')
+const PORT = 9333
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+// ---------- 启动 Edge ----------
+const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aufheben-smoke-'))
+const edge = spawn(
+  EDGE,
+  [
+    '--headless=new',
+    `--remote-debugging-port=${PORT}`,
+    `--user-data-dir=${userDataDir}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-gpu',
+    '--window-size=1280,720',
+    'about:blank',
+  ],
+  { stdio: 'ignore' }
+)
+
+let exitCode = 1
+try {
+  await waitForDevtools()
+  const target = await getTarget()
+  const cdp = await connect(target.webSocketDebuggerUrl)
+
+  const errors = []
+  cdp.on('Runtime.exceptionThrown', (params) => {
+    errors.push(
+      params.exceptionDetails?.exception?.description ||
+        params.exceptionDetails?.text ||
+        'unknown exception'
+    )
+  })
+  cdp.on('Runtime.consoleAPICalled', (params) => {
+    if (params.type === 'error') {
+      errors.push(params.args.map((a) => a.value ?? a.description ?? '').join(' '))
+    }
+  })
+
+  await cdp.send('Page.enable')
+  await cdp.send('Runtime.enable')
+  await cdp.send('Log.enable')
+
+  console.log(`→ 打开 ${TARGET_URL}`)
+  await cdp.send('Page.navigate', { url: TARGET_URL })
+  await sleep(3000)
+
+  // ---------- 1. 加载屏就绪 ----------
+  const buttonReady = await evaluate(
+    cdp,
+    `(() => {
+       const b = document.getElementById('loaderStart')
+       const loader = document.getElementById('loader')
+       return b && !b.hidden && loader && getComputedStyle(loader).display !== 'none'
+     })()`
+  )
+  console.log(`  加载屏就绪：${buttonReady}`)
+  if (!buttonReady) {
+    throw new Error('加载屏没有出现「进入场景」按钮')
+  }
+
+  // ---------- 2. 点击「进入场景」 ----------
+  const box = await evaluate(
+    cdp,
+    `(() => {
+       const r = document.getElementById('loaderStart').getBoundingClientRect()
+       return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+     })()`
+  )
+  await mouseClick(cdp, box.x, box.y)
+  await sleep(1200)
+
+  const started = await evaluate(cdp, `window.aufheben ? window.aufheben.started : false`)
+  const loaderGone = await evaluate(
+    cdp,
+    `(() => {
+       const l = document.getElementById('loader')
+       return l.hidden || getComputedStyle(l).display === 'none'
+     })()`
+  )
+  console.log(`  已进场：${started} / 加载屏已隐藏：${loaderGone}`)
+  if (!started) throw new Error('点击「进入场景」后没有进入场景')
+
+  await saveScreenshot(cdp, path.join(OUT_DIR, '01-scene.png'))
+
+  // ---------- 3. 按 W 键前进 ----------
+  const before = await evaluate(cdp, `window.aufheben.world.character.body.position.z`)
+  await key(cdp, 'KeyW', 'w')
+  await sleep(1500)
+  await key(cdp, 'KeyW', 'w', 'up')
+  await sleep(400)
+  const after = await evaluate(cdp, `window.aufheben.world.character.body.position.z`)
+
+  const moved = Math.abs(after - before)
+  console.log(`  角色 z：${before.toFixed(2)} → ${after.toFixed(2)}（位移 ${moved.toFixed(2)}）`)
+  if (moved < 0.5) throw new Error('按 W 键角色没有移动')
+
+  await saveScreenshot(cdp, path.join(OUT_DIR, '02-walked.png'))
+
+  // ---------- 4. 纯文字清单兜底 ----------
+  const fallbackItems = await evaluate(
+    cdp,
+    `document.querySelectorAll('#fallbackList .fallback__item').length`
+  )
+  console.log(`  文字清单条目：${fallbackItems}`)
+  if (fallbackItems < 1) throw new Error('文字清单兜底没有渲染内容')
+
+  // ---------- 5. 控制台错误 ----------
+  if (errors.length) {
+    const unique = [...new Set(errors)]
+    console.log(`\n控制台错误（去重后 ${unique.length} 条 / 共 ${errors.length} 次）：`)
+    for (const error of unique) console.log('  ✗', error.split('\n')[0])
+    throw new Error(`有 ${unique.length} 条控制台错误`)
+  }
+
+  console.log('\n✓ 冒烟测试全部通过')
+  exitCode = 0
+} catch (error) {
+  console.error(`\n✗ 冒烟测试失败：${error.message}`)
+  exitCode = 1
+} finally {
+  edge.kill()
+  await sleep(300)
+  try {
+    fs.rmSync(userDataDir, { recursive: true, force: true })
+  } catch {}
+}
+
+process.exit(exitCode)
+
+// ---------- CDP 小工具 ----------
+
+async function waitForDevtools() {
+  for (let i = 0; i < 60; i++) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${PORT}/json/version`)
+      if (response.ok) return
+    } catch {}
+    await sleep(250)
+  }
+  throw new Error('Edge DevTools 端口没起来')
+}
+
+async function getTarget() {
+  const response = await fetch(`http://127.0.0.1:${PORT}/json/list`)
+  const list = await response.json()
+  const page = list.find((t) => t.type === 'page')
+  if (!page) throw new Error('找不到可用的页面 target')
+  return page
+}
+
+function connect(url) {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(url)
+    const handlers = new Map()
+    const listeners = {}
+
+    socket.addEventListener('message', (event) => {
+      const message = JSON.parse(event.data)
+      if (message.id && handlers.has(message.id)) {
+        const { resolve: done, reject: fail } = handlers.get(message.id)
+        handlers.delete(message.id)
+        if (message.error) fail(new Error(message.error.message))
+        else done(message.result)
+      } else if (message.method && listeners[message.method]) {
+        for (const listener of listeners[message.method]) listener(message.params)
+      }
+    })
+
+    socket.addEventListener('error', reject)
+    socket.addEventListener('open', () => {
+      resolve({
+        send(method, params = {}) {
+          return new Promise((done, fail) => {
+            const id = Math.floor(Math.random() * 1e9)
+            handlers.set(id, { resolve: done, reject: fail })
+            socket.send(JSON.stringify({ id, method, params }))
+          })
+        },
+        on(method, listener) {
+          listeners[method] = listeners[method] || []
+          listeners[method].push(listener)
+        },
+      })
+    })
+  })
+}
+
+async function evaluate(cdp, expression) {
+  const result = await cdp.send('Runtime.evaluate', {
+    expression,
+    returnByValue: true,
+    awaitPromise: true,
+  })
+  if (result.exceptionDetails) {
+    throw new Error(result.exceptionDetails.text)
+  }
+  return result.result.value
+}
+
+async function mouseClick(cdp, x, y) {
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed', x, y, button: 'left', clickCount: 1,
+  })
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased', x, y, button: 'left', clickCount: 1,
+  })
+}
+
+async function key(cdp, code, keyName, type = 'down') {
+  await cdp.send('Input.dispatchKeyEvent', {
+    type: type === 'up' ? 'keyUp' : 'keyDown',
+    code,
+    key: keyName,
+    windowsVirtualKeyCode: code === 'KeyW' ? 87 : 0,
+    nativeVirtualKeyCode: code === 'KeyW' ? 87 : 0,
+  })
+}
+
+async function saveScreenshot(cdp, filePath) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  const shot = await cdp.send('Page.captureScreenshot', { format: 'png' })
+  fs.writeFileSync(filePath, Buffer.from(shot.data, 'base64'))
+  console.log(`  截图：${filePath}`)
+}
