@@ -102,6 +102,25 @@
 
 替代方案：`tools/smoke.mjs` 用 Edge headless + CDP 跑真实路径（点按钮、按键、读物理坐标、收控制台错误）。这个脚本抓出了 4.3 的 bug。
 
+### 4.6 cannon-es 刚体休眠会让人走不动
+
+**症状**：进入场景后站着不动约 1 秒，再按 W 键角色完全不动——但 `input.keys` 里明明有
+`KeyW`，`body.velocity.z` 也是 -7，只有 `body.position` 一动不动。
+
+**原因**：`world.allowSleep = true`（默认），刚体静止超过 `sleepTimeLimit`（1 秒）后进入
+`SLEEPING`，cannon-es 对休眠刚体**跳过积分**。而角色的移动是直接写 `body.velocity`
+（不走 `applyImpulse`），**不会触发唤醒**，也没有任何地方调 `wakeUp()`。
+于是刚体永远醒不过来。
+
+**修法**：角色刚体 `body.allowSleep = false`。静态场景用 mass 0，本来就不需要休眠。
+
+**为什么难发现**：本地 `vite preview` 跑得快，角色出生时被碰撞弹开过（速度不为零），
+刚好在休眠阈值前按下了 W，掩盖了这个 bug。线上机器慢、页面加载久，角色安静地站在原地，
+1 秒后睡着——**真实访客一定会踩到**。
+
+`tools/smoke.mjs` 现在会先 idle 1.8 秒再断言 `body.sleepState === 0`，把这个 bug 锁住。
+
+
 ## 5. 性能预算
 
 当前首屏（gzip）：
@@ -128,3 +147,68 @@
 | 中 | 场景分区 | 不同区域换氛围（对应 bailu 的恐怖调性） |
 | 中 | `prefers-reduced-motion` 降级 | 降级成可滚动页面，不做 3D |
 | 低 | 3D 角色模型 | 换成有骨骼的 glTF 模型，取代程序化人形 |
+
+## 7. 部署链路（2026-10-21 重做）
+
+### 7.1 为什么重做
+
+原 workflow 只做一件事：在服务器上跑 `deploy-app`，而 `deploy-app` 的第一步是
+`git clone https://github.com/daiduo2/home.git`。**服务器访问 github.com 稳定失败**
+（`GnuTLS recv error (-110): The TLS connection was non-properly terminated`），
+每次部署都在这一步挂 90 秒后 exit 128。2026-10-13 那次成功只是运气。
+
+### 7.2 现在的流程
+
+```
+push main
+  → Actions: checkout → setup-node(20) → npm ci → vite build → tar 打包
+  → appleboy/scp-action 把 dist.tar.gz 传到服务器 /tmp
+  → appleboy/ssh-action 在服务器上解包覆盖 + nginx reload + 健康检查
+```
+
+服务器不再碰 github，只接收产物。构建和部署的职责因此分开了：
+构建在 Actions 里（可复现、和本机一致），部署只是"把文件放到 web root"。
+
+### 7.3 三个必须记住的坑
+
+**① root 目录不要写死。** 部署脚本用三路反查定位 web root：
+
+1. 让 nginx 自己吐出当前页面（`curl -H "Host: aufheben.top" http://127.0.0.1/`），
+   从里面取产物文件名，再在磁盘上 `find` 这个文件 → 它所在目录的上级就是 root（最准）
+2. 读 nginx 配置里的 `root` 指令
+3. 回退到 `/var/www/home/dist`
+
+服务器的真实 root 是 `/var/www/home/dist`，vhost 在 `/etc/nginx/sites-enabled/home`。
+
+**② 解包只覆盖不删除。** `tar -xzf` 不加 `--delete`：残留的旧 asset 文件无害
+（index.html 只引用新 hash），但万一路径判断错了，也不会删掉线上正在用的东西。
+
+**③ HTML 必须显式 no-store。** 腾讯云 EO 默认缓存 HTML，源站更新后访客拿到的还是旧
+index.html（`EO-Cache-Status: HIT`，`Age` 一直涨，而且刷新时拿到的是节点之间的旧副本，
+不是源站的新文件）。修法是在 nginx 的 server 块里加：
+
+```nginx
+add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+```
+
+放在 server 级而不是 `location = /index.html`：因为 `location ~* \.(js|css|...)$`
+里已经有自己的 `add_header`，本来就不继承 server 级的 header，静态资源的长缓存不受影响。
+部署脚本会幂等地补这一行（先备份，`nginx -t` 不过就回滚）。
+
+**注意**：这条只防未来。已经缓存进去的旧对象，得在 EO 控制台刷新缓存才会清掉，
+或者等 TTL 到期。
+
+### 7.4 appleboy/ssh-action@v1 的输入格式（踩过）
+
+- `envs` 传的是**变量名**（逗号分隔），action 从 runner 环境里取值，
+  用单引号安全转义后 `export` 到远端脚本。值要在**步骤级 `env:`** 里给，
+  写进 `with: env:` 会被当成未知输入，workflow 直接校验失败（run 0 秒就红）。
+- v1 **没有** `script_stop` 输入（v0.x 才有）。多行脚本靠脚本自己的 `set -e` 控制。
+- `with:` 里只能出现 action.yml 里声明过的输入名，多一个就报错。
+
+### 7.5 服务器只读诊断
+
+`.github/workflows/diag.yml`（workflow_dispatch 手动触发）会在服务器上打印：
+nginx 配置全文、vhost 原文、各目录权限与时间戳、站点文件指纹、不同 Host 头下
+nginx 分别返回什么、监听端口。改 nginx 配置或排查"线上和本地不一致"时先跑它。
+
