@@ -2,19 +2,112 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="aufheben — 个人主页" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="description" content="aufheben — 中国科学院大学 · 他山科学智能社区 · 科研智能体方向" />
+  <meta name="theme-color" content="#0a0a0f" />
   <title>aufheben</title>
   <link rel="stylesheet" href="/src/style.css" />
 </head>
 <body>
-  <canvas id="scene"></canvas>
+  <canvas id="scene" class="js-canvas"></canvas>
 
-  <main class="overlay">
-    <h1 class="title">aufheben</h1>
-    <p class="tagline">个人主页 · 占位 demo</p>
-    <p class="hint">拖动旋转 · 滚轮缩放</p>
-  </main>
+  <!-- 加载屏 -->
+  <div class="loader" id="loader">
+    <div class="loader__inner">
+      <h1 class="loader__title">aufheben</h1>
+      <p class="loader__tagline">中国科学院大学 · 他山科学智能社区 · 科研智能体方向</p>
+      <div class="loader__bar"><div class="loader__fill" id="loaderFill"></div></div>
+      <p class="loader__status" id="loaderStatus">正在装配场景</p>
+      <button class="loader__start" id="loaderStart" hidden>进入场景</button>
+      <p class="loader__hint" id="loaderHint">WASD / 方向键移动 · 鼠标转动视角 · E 查看 · Tab 文字清单</p>
+    </div>
+  </div>
+
+  <!-- HUD -->
+  <div class="hud" id="hud" hidden>
+    <div class="hud__corner hud__corner--tl">
+      <span class="hud__brand">aufheben</span>
+      <span class="hud__sub">科研智能体</span>
+    </div>
+
+    <div class="hud__corner hud__corner--tr">
+      <button class="hud__btn" id="btnList" type="button" title="文字清单（Tab）">清单</button>
+      <button class="hud__btn" id="btnSettings" type="button" title="设置">设置</button>
+    </div>
+
+    <div class="hud__corner hud__corner--bl">
+      <div class="hud__keys" id="hudKeys">
+        <span><b>WASD</b> 移动</span>
+        <span><b>鼠标</b> 转视角</span>
+        <span><b>E</b> 查看</span>
+        <span><b>Tab</b> 文字清单</span>
+      </div>
+    </div>
+
+    <div class="hud__corner hud__corner--br">
+      <div class="hud__prompt" id="hudPrompt" hidden></div>
+    </div>
+  </div>
+
+  <!-- 触屏控制 -->
+  <div class="touch" id="touch" hidden>
+    <div class="touch__stick" id="touchStick"><div class="touch__knob" id="touchKnob"></div></div>
+    <button class="touch__btn touch__btn--action" id="touchAction" type="button">E</button>
+  </div>
+
+  <!-- 地标详情面板 -->
+  <div class="panel" id="panel" hidden>
+    <div class="panel__card" role="dialog" aria-modal="true" aria-labelledby="panelTitle">
+      <button class="panel__close" id="panelClose" type="button" aria-label="关闭">✕</button>
+      <p class="panel__kicker" id="panelKicker"></p>
+      <h2 class="panel__title" id="panelTitle"></h2>
+      <p class="panel__desc" id="panelDesc"></p>
+      <div class="panel__links" id="panelLinks"></div>
+    </div>
+  </div>
+
+  <!-- 设置面板 -->
+  <div class="panel panel--settings" id="settings" hidden>
+    <div class="panel__card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <button class="panel__close" id="settingsClose" type="button" aria-label="关闭">✕</button>
+      <h2 class="panel__title" id="settingsTitle">设置</h2>
+      <div class="panel__row">
+        <label for="qualitySelect">画面质量</label>
+        <select id="qualitySelect">
+          <option value="low">低</option>
+          <option value="medium">中</option>
+          <option value="high">高</option>
+        </select>
+      </div>
+      <div class="panel__row">
+        <label for="soundToggle">音效</label>
+        <input type="checkbox" id="soundToggle" checked />
+      </div>
+      <div class="panel__row">
+        <label for="cameraToggle">第一人称视角</label>
+        <input type="checkbox" id="cameraToggle" />
+      </div>
+      <p class="panel__note" id="statsNote"></p>
+    </div>
+  </div>
+
+  <!-- 文字清单兜底：Tab 或 ?list 打开，给读屏与赶时间的人一条路 -->
+  <div class="fallback" id="fallback" hidden>
+    <div class="fallback__card">
+      <button class="panel__close" id="fallbackClose" type="button" aria-label="关闭">✕</button>
+      <h2 class="panel__title">内容清单</h2>
+      <p class="fallback__note">按 Esc 返回场景。</p>
+      <div class="fallback__list" id="fallbackList"></div>
+    </div>
+  </div>
+
+  <noscript>
+    <div class="noscript">
+      <h1>aufheben</h1>
+      <p>这个主页是一个可交互的 3D 场景，需要 JavaScript。以下是纯文字版内容：</p>
+      <div id="noscriptList"></div>
+    </div>
+  </noscript>
 
   <script type="module" src="/src/main.js"></script>
 </body>

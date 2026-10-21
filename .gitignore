@@ -22,6 +22,9 @@ build/
 .next/
 out/
 
+# 冒烟测试产物
+tools/smoke-out/
+
 # Docker
 .dockerignore
 

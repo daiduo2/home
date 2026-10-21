@@ -3,13 +3,16 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "aufheben.top 个人主页 (3D, Vite + Three.js)",
+  "description": "aufheben.top 个人主页（可交互 3D 场景，Vite + Three.js）",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --port 3000"
   },
   "dependencies": {
+    "cannon-es": "^0.20.0",
+    "gsap": "^3.12.5",
+    "howler": "^2.2.4",
     "three": "^0.169.0"
   },
   "devDependencies": {
