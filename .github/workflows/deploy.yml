@@ -158,6 +158,46 @@ jobs:
               || as_root nginx -s reload 2>/dev/null \
               || echo "⚠️ nginx 重载失败，静态文件通常仍然直接生效"
 
+            # ---------- HTML 不缓存（防止边缘缓存把旧 index.html 一直发下去） ----------
+            # 腾讯云 EO 默认会缓存 HTML，站点更新后访客仍拿到旧页面，
+            # 只能靠控制台刷新缓存。这里让源站对 HTML 明确 no-store，之后不再被缓存。
+            VH=""
+            for f in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
+              [ -f "$f" ] || continue
+              if as_root grep -q "root $ROOT" "$f" 2>/dev/null; then VH="$f"; break; fi
+            done
+            if [ -z "$VH" ]; then
+              echo "⚠️ 没找到含 root $ROOT 的 nginx 配置，跳过 HTML 缓存头处理"
+            elif as_root grep -q 'html-no-store' "$VH" 2>/dev/null; then
+              echo "✔ nginx 配置里已有 html-no-store 标记"
+            else
+              as_root cp "$VH" "$VH.bak"
+              as_root awk -v rootline="root $ROOT;" '
+                {
+                  line = $0
+                  gsub(/^[ \t]+|[ \t]+$/, "", line)
+                  if (line == rootline) {
+                    ind = $0
+                    sub(/[^ \t].*$/, "", ind)
+                    print $0
+                    print ind "# html-no-store：index.html 不缓存，避免边缘缓存发旧版本"
+                    print ind "add_header Cache-Control \"no-cache, no-store, must-revalidate\" always;"
+                    next
+                  }
+                  print
+                }
+              ' "$VH" > /tmp/_vhost.new
+              as_root cp /tmp/_vhost.new "$VH"
+              if as_root nginx -t 2>/dev/null; then
+                as_root systemctl reload nginx 2>/dev/null || as_root nginx -s reload 2>/dev/null || true
+                echo "✅ 已给 $VH 加上 HTML no-store 头"
+              else
+                as_root cp "$VH.bak" "$VH"
+                echo "❌ nginx -t 失败，已回滚 $VH"
+              fi
+              rm -f /tmp/_vhost.new
+            fi
+
             # ---------- 健康检查 ----------
             PAGE=$(fetch_live)
             if printf '%s' "$PAGE" | grep -q "${{ env.ASSET }}"; then

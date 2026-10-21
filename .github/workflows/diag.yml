@@ -56,7 +56,8 @@ jobs:
             run_root grep -rn 'include' /etc/nginx/nginx.conf /etc/nginx/sites-enabled/ 2>/dev/null | head -20
 
             echo
-            echo "===== 站点相关目录 ====="            for d in /var/www /var/www/html /var/www/home /var/www/home/dist /var/www/home/deploy; do
+            echo "===== 站点相关目录 ====="
+            for d in /var/www /var/www/html /var/www/home /var/www/home/dist /var/www/home/deploy; do
               echo "--- $d ---"
               run_root ls -la "$d" 2>&1 | head -20
             done
