@@ -1,11 +1,21 @@
 import * as CANNON from 'cannon-es'
 
 /**
+ * 射线检测时用的碰撞掩码：跳过 2 号分组。
+ * 2 号分组是场地边界墙 —— 远景相机会落在场地外，
+ * 如果射线撞上边界墙，相机会被硬拽回角色身边，取景就废了。
+ */
+const RAY_MASK = -3
+
+/**
  * 物理世界（cannon-es）。
  * 3d-folio 用的是 cannon 0.6.2 + RaycastVehicle；步行角色不需要车辆物理，
  * 只用到刚体、球体碰撞与射线检测，这些在 cannon-es 里都是稳定 API。
  */
 export default class Physics {
+  /** 射线掩码：跳过 2 号分组（场地边界墙） */
+  static RAY_MASK = RAY_MASK
+
   constructor() {
     this.world = new CANNON.World({
       gravity: new CANNON.Vec3(0, -24, 0),
@@ -69,6 +79,11 @@ export default class Physics {
     if (_options.rotationY) {
       body.quaternion.setFromEuler(0, _options.rotationY, 0)
     }
+    // 碰撞分组：边界墙放 2 号，射线检测时跳过它们
+    // （远景相机会落在场地外，不然会被边界墙把镜头硬拽回来）
+    if (_options.group) {
+      body.collisionFilterGroup = _options.group
+    }
     this.addBody(body)
     return body
   }
@@ -80,7 +95,7 @@ export default class Physics {
     this.world.raycastClosest(
       new CANNON.Vec3(_from.x, _from.y, _from.z),
       to,
-      { collisionFilterMask: -1, skipBackfaces: true },
+      { collisionFilterMask: Physics.RAY_MASK, skipBackfaces: true },
       result
     )
     return result.hasHit ? result : null
@@ -92,7 +107,7 @@ export default class Physics {
     this.world.raycastClosest(
       new CANNON.Vec3(_from.x, _from.y, _from.z),
       new CANNON.Vec3(_to.x, _to.y, _to.z),
-      { collisionFilterMask: -1, skipBackfaces: true },
+      { collisionFilterMask: Physics.RAY_MASK, skipBackfaces: true },
       result
     )
     if (!result.hasHit) return null

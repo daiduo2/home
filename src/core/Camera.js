@@ -27,20 +27,22 @@ export default class Camera {
 
     // 目标角度：输入直接改这两个
     this.yaw = 0
-    this.pitch = -0.22
+    this.pitch = -0.5
 
     // 实际使用的角度：阻尼平滑后的结果
     this.smoothYaw = 0
-    this.smoothPitch = -0.22
+    this.smoothPitch = -0.5
 
-    this.distance = 7.5
-    this.currentDistance = 7.5
-    this.minDistance = 2.2
-    this.maxDistance = 16
+    // 远景：角色只是大场景里的小人，相机拉远抬高
+    this.distance = 21
+    this.currentDistance = 21
+    this.minDistance = 6
+    this.maxDistance = 46
 
-    // pitch > 0 抬头，< 0 低头
-    this.minPitch = -1.15
-    this.maxPitch = 0.75
+    // pitch > 0 抬头，< 0 低头。
+    // 远景机位下基本是俯视：抬头到 0.35 就够了，再高相机会往地面以下钻。
+    this.minPitch = -1.05
+    this.maxPitch = 0.35
 
     this.height = 1.45
     this.lookAhead = 1.2
@@ -55,10 +57,10 @@ export default class Camera {
     this.right = new THREE.Vector3(1, 0, 0)
 
     this.instance = new THREE.PerspectiveCamera(
-      38,
+      28,
       this.sizes.viewport.width / this.sizes.viewport.height,
       0.1,
-      200
+      260
     )
 
     this._target = new THREE.Vector3()
@@ -77,11 +79,11 @@ export default class Camera {
   }
 
   /**
-   * 输入层给的是"鼠标位移增量"，这里只累加到目标角度，
-   * 平滑放到 update 里统一做（帧率无关）。
+   * 输入层给的是"视角增量"，约定 look.x > 0 = 向右转、look.y > 0 = 向上看。
+   * 这里只累加到目标角度，平滑放到 update 里统一做（帧率无关）。
    */
   applyLook(_look) {
-    // Input 里把鼠标右移写成了负值，这里翻回来：鼠标右移 = yaw 增大 = 视线右转
+    // yaw 减小 = 视线向右转（direction.x = -sin(yaw) 会变大）
     this.yaw -= _look.x
     this.pitch = THREE.MathUtils.clamp(
       this.pitch + _look.y,

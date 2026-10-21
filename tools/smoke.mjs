@@ -113,16 +113,41 @@ try {
   console.log(`  刚体休眠状态：${sleepState}（0=AWAKE 1=SLEEPY 2=SLEEPING）`)
   if (sleepState !== 0) throw new Error(`角色刚体进入休眠状态 ${sleepState}，会走不动`)
 
+  // 站着不动时不能自己走。
+  // 本机连着的 DualSense Edge 在 Windows 上会报 axes[1] = -1（等于左摇杆推到底），
+  // 手柄分支如果直接采信，角色就会自己往前冲停不下来。
+  const idleA = await evaluate(cdp, `window.aufheben.world.character.body.position.z`)
+  await sleep(1200)
+  const idleB = await evaluate(cdp, `window.aufheben.world.character.body.position.z`)
+  console.log(`  静置 1.2 秒位移：${Math.abs(idleB - idleA).toFixed(3)}`)
+  if (Math.abs(idleB - idleA) > 0.2) throw new Error('没有按键时角色自己在走')
+
   const before = await evaluate(cdp, `window.aufheben.world.character.body.position.z`)
   await key(cdp, 'KeyW', 'w')
-  await sleep(1500)
+  await sleep(700)
   await key(cdp, 'KeyW', 'w', 'up')
-  await sleep(400)
+  await sleep(600)
   const after = await evaluate(cdp, `window.aufheben.world.character.body.position.z`)
 
   const moved = Math.abs(after - before)
   console.log(`  角色 z：${before.toFixed(2)} → ${after.toFixed(2)}（位移 ${moved.toFixed(2)}）`)
   if (moved < 0.5) throw new Error('按 W 键角色没有移动')
+
+  // ---------- 3.5 松键后必须停下来 ----------
+  // 以前键盘的增量被累加进 move，松键后 move 里还留着 1，角色会一直走。
+  await sleep(700)
+  const stop1 = await evaluate(cdp, `window.aufheben.world.character.body.position.z`)
+  await sleep(900)
+  const stop2 = await evaluate(cdp, `window.aufheben.world.character.body.position.z`)
+  const speed = await evaluate(
+    cdp,
+    `Math.hypot(window.aufheben.world.character.body.velocity.x, window.aufheben.world.character.body.velocity.z)`
+  )
+  console.log(
+    `  松键后：水平速度 ${speed.toFixed(2)}，位置 ${stop1.toFixed(2)} → ${stop2.toFixed(2)}`
+  )
+  if (speed > 0.3) throw new Error(`松键后速度没有归零：${speed.toFixed(2)}`)
+  if (Math.abs(stop2 - stop1) > 0.15) throw new Error('松键后角色还在往前走')
 
   await saveScreenshot(cdp, path.join(OUT_DIR, '02-walked.png'))
 
@@ -152,6 +177,10 @@ try {
 
   // ---------- 5. 拖拽转视角（指针锁拿不到时的兜底） ----------
   const yawBefore = await evaluate(cdp, `window.aufheben.camera.yaw`)
+  const dirBefore = await evaluate(
+    cdp,
+    `(() => { const d = window.aufheben.camera.direction; return [d.x, d.z] })()`
+  )
   await evaluate(
     cdp,
     `document.dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true }))`
@@ -162,6 +191,10 @@ try {
   )
   await sleep(400)
   const yawAfter = await evaluate(cdp, `window.aufheben.camera.yaw`)
+  const dirAfter = await evaluate(
+    cdp,
+    `(() => { const d = window.aufheben.camera.direction; return [d.x, d.z] })()`
+  )
   await evaluate(
     cdp,
     `document.dispatchEvent(new MouseEvent('mouseup', { button: 0, bubbles: true }))`
@@ -169,6 +202,15 @@ try {
   console.log(`  拖拽转视角：yaw ${yawBefore.toFixed(2)} → ${yawAfter.toFixed(2)}`)
   if (Math.abs(yawAfter - yawBefore) < 0.05) {
     throw new Error('拖拽转视角没有生效')
+  }
+
+  // 往右拖，视线必须往右转。
+  // 起点朝 -Z，屏幕右侧是 +X，所以视线水平分量的 x 必须变大。
+  console.log(
+    `  视线水平分量 x：${dirBefore[0].toFixed(3)} → ${dirAfter[0].toFixed(3)}`
+  )
+  if (dirAfter[0] <= dirBefore[0] + 0.05) {
+    throw new Error('往右拖没有把视角转向右边（左右反了）')
   }
 
   // ---------- 6. 渲染预算 ----------

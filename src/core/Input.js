@@ -14,7 +14,14 @@ export default class Input extends EventEmitter {
 
     this.keys = new Set()
 
+    // 触屏摇杆的持续值，和键盘的瞬时值必须分开存。
+    // 以前键盘的增量直接累加进 move，松键后 move 里还留着上一帧的值，
+    // 角色就永远停不下来。
+    this.touchMove = { x: 0, y: 0 }
+
+    // move：每帧重新算出来的最终移动向量（相机相对）
     this.move = { x: 0, y: 0 }
+    // look：视角增量。x > 0 表示向右转，y > 0 表示向上看
     this.look = { x: 0, y: 0 }
     this.interact = false
 
@@ -40,8 +47,12 @@ export default class Input extends EventEmitter {
     this.enabled = _value
     if (!this.enabled) {
       this.keys.clear()
+      this.touchMove.x = 0
+      this.touchMove.y = 0
       this.move.x = 0
       this.move.y = 0
+      this.look.x = 0
+      this.look.y = 0
     }
   }
 
@@ -130,7 +141,8 @@ export default class Input extends EventEmitter {
     document.addEventListener('mousemove', (event) => {
       if (!this.enabled) return
       if (!this.pointerLocked && !this.dragging) return
-      this.look.x -= event.movementX * this.mouseSensitivity
+      // 约定：look.x > 0 = 视角向右，look.y > 0 = 向上看
+      this.look.x += event.movementX * this.mouseSensitivity
       this.look.y -= event.movementY * this.mouseSensitivity
     })
 
@@ -185,6 +197,8 @@ export default class Input extends EventEmitter {
       }, { passive: false })
 
       const end = () => {
+        this.touchMove.x = 0
+        this.touchMove.y = 0
         this.move.x = 0
         this.move.y = 0
         if (this.touchKnob) {
@@ -219,7 +233,7 @@ export default class Input extends EventEmitter {
         if (touch.identifier === this.touchLookPointerId) {
           const dx = touch.clientX - this.touchLookLast.x
           const dy = touch.clientY - this.touchLookLast.y
-          this.look.x -= dx * this.touchSensitivity
+          this.look.x += dx * this.touchSensitivity
           this.look.y -= dy * this.touchSensitivity
           this.touchLookLast = { x: touch.clientX, y: touch.clientY }
         }
@@ -254,12 +268,23 @@ export default class Input extends EventEmitter {
       this.touchKnob.style.transform = `translate(${dx}px, ${dy}px)`
     }
 
-    this.move.x = dx / max
-    this.move.y = -dy / max
+    this.touchMove.x = dx / max
+    this.touchMove.y = -dy / max
   }
 
   // ---------------- 手柄 ----------------
 
+  /**
+   * 手柄目前**不参与移动**，这是有意为之。
+   *
+   * 实测本机连着的 DualSense Edge 在 Windows 上报出来的状态是坏的：
+   * 静止时 axes[1] 恒为 -1（等于左摇杆一直推到底），而且这个值还会跳变，
+   * buttons[2] 也是常按的。任何"读轴 → 驱动移动"的写法都会让角色
+   * 自己往前冲、或者一顿一顿地反向抽搐，而且停不下来。
+   *
+   * 要加手柄支持的话，必须先做显式标定（用户按某个键确认手柄、
+   * 记录静止零点、并且要求明显偏离零点才采信），不能直接读轴就用。
+   */
   setGamepadState() {
     if (!navigator.getGamepads) return null
     const pads = navigator.getGamepads()
@@ -273,45 +298,25 @@ export default class Input extends EventEmitter {
 
   update() {
     if (!this.enabled) {
+      this.touchMove.x = 0
+      this.touchMove.y = 0
       this.move.x = 0
       this.move.y = 0
       return
     }
 
-    // 键盘覆盖摇杆
-    let x = this.move.x
-    let y = this.move.y
+    // 每帧从零重算：触屏摇杆的持续值 + 键盘的瞬时值。
+    // 千万别把键盘的增量累加回 move —— 松键后 move 里还留着上一帧的 1，
+    // 角色就会一直往前走停不下来。
+    let x = this.touchMove.x
+    let y = this.touchMove.y
 
     if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) x -= 1
     if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) x += 1
     if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) y += 1
     if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) y -= 1
 
-    // 手柄
-    const pad = this.setGamepadState()
-    if (pad) {
-      const deadzone = 0.18
-      const applyAxis = (value) => {
-        if (Math.abs(value) < deadzone) return 0
-        return (value - Math.sign(value) * deadzone) / (1 - deadzone)
-      }
-      const axisX = applyAxis(pad.axes[0] || 0)
-      const axisY = applyAxis(pad.axes[1] || 0)
-      if (axisX !== 0 || axisY !== 0) {
-        x = axisX
-        y = -axisY
-      }
-      const lookX = applyAxis(pad.axes[2] || 0)
-      const lookY = applyAxis(pad.axes[3] || 0)
-      this.look.x -= lookX * 0.045
-      this.look.y -= lookY * 0.045
-
-      const buttonA = pad.buttons[0] && pad.buttons[0].pressed
-      if (buttonA && !this._padA) {
-        this.interact = true
-      }
-      this._padA = buttonA
-    }
+    // 手柄不参与移动（原因见 setGamepadState 的注释）
 
     const length = Math.hypot(x, y)
     if (length > 1) {

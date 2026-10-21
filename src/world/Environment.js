@@ -133,6 +133,9 @@ export default class Environment {
         width,
         height: height * 2,
         depth,
+        // 边界墙归 2 号分组：相机的遮挡射线会跳过它们，
+        // 否则远景相机落在场地外时会被墙把镜头拽回角色身边
+        group: 2,
       })
     }
   }
