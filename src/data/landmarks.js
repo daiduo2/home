@@ -8,6 +8,9 @@
  *   type       project | about | contact | link
  *   accent     强调色
  *   radius     玩家走到多近时触发
+ *
+ * 这里放的是"这个站自己的东西"：作品与作品背后的项目。
+ * 学术履历那套在 GitHub profile README 里，不在这个站。
  */
 
 export default [
@@ -18,40 +21,37 @@ export default [
     rotation: 0,
     accent: '#6366f1',
     badge: '关于',
-    title: '伊苏林迪竹节虫',
-    subtitle: '科研智能体方向',
+    title: 'aufheben',
+    subtitle: '一个能走进去的个人主页',
     description:
-      '中国科学院大学 · 他山科学智能社区。把科研流程里的判断题交给能验证的系统：论文要能被检索和追溯，模型要能被求解器跑一遍，证明要由 verifier 判定。',
+      '与其贴一张作品清单，不如把场地搭出来：走到展台前才看到内容。左前方是作品，右前方是作品背后的项目，身后是联系方式。',
     links: [],
-  },
-  {
-    id: 'projects',
-    type: 'project',
-    position: [-8, 2],
-    rotation: Math.PI / 2,
-    accent: '#22d3ee',
-    badge: '项目',
-    title: '精选项目',
-    subtitle: '从地震解释图到 Lean 证明',
-    description:
-      'geoseg 从地震解释图直接提取速度区模型，产出 SPECFEM2D 可用的输入；local-proof-loop 用 Lean 的诊断反馈驱动多轮收敛。',
-    links: [
-      { label: 'geoseg', url: 'https://github.com/daiduo2/geoseg' },
-      { label: 'local-proof-loop', url: 'https://github.com/daiduo2/local-proof-loop' },
-    ],
   },
   {
     id: 'bailu',
     type: 'project',
-    position: [8, 2],
-    rotation: -Math.PI / 2,
+    position: [-8, 2],
+    rotation: Math.PI / 2,
     accent: '#f472b6',
     badge: '作品',
-    title: 'bailu',
-    subtitle: '模拟恐怖网站',
+    title: '白鹿疗养院',
+    subtitle: '拟真档案网站 / 叙事解谜',
     description:
-      '一个以拟真界面做外壳的模拟恐怖网站：网站本身是恐吓，浏览路径是解谜。',
+      '一个把自己伪装成医院病历数字化项目的网站。界面是照着真的做的，档案看起来也是真的——只有打开它的人会发现哪里不对劲。浏览路径本身就是解谜。',
     links: [],
+  },
+  {
+    id: 'story2',
+    type: 'project',
+    position: [8, 2],
+    rotation: -Math.PI / 2,
+    accent: '#22d3ee',
+    badge: '项目',
+    title: 'story2',
+    subtitle: '交互式叙事框架',
+    description:
+      '白鹿疗养院背后的那套东西：主线内容、角色变体、外围事件日志，还有玩家存档。内容按目录组织，一次构建出一个站点，换一批内容就是一个新作品。',
+    links: [{ label: 'GitHub', url: 'https://github.com/daiduo2/story2' }],
   },
   {
     id: 'contact',
@@ -61,11 +61,8 @@ export default [
     accent: '#34d399',
     badge: '联系',
     title: '找到我',
-    subtitle: 'GitHub / 他山社区 / 邮件',
-    description: '站内没写完的部分，先在这里留个位置。',
-    links: [
-      { label: 'GitHub', url: 'https://github.com/daiduo2' },
-      { label: '他山社区', url: 'https://tashan.ac.cn' },
-    ],
+    subtitle: 'GitHub',
+    description: '代码、实验记录和还没做完的草稿都在这儿。',
+    links: [{ label: 'GitHub', url: 'https://github.com/daiduo2' }],
   },
 ]

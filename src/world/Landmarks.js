@@ -36,10 +36,8 @@ export default class Landmarks {
     const accent = _entry.accent || '#6366f1'
 
     // 底座
-    const baseMaterial = new THREE.MeshStandardMaterial({
+    const baseMaterial = new THREE.MeshLambertMaterial({
       color: 0x1c1c28,
-      roughness: 0.9,
-      metalness: 0.05,
       flatShading: true,
     })
     const base = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.25, 0.22, 6), baseMaterial)
@@ -69,7 +67,7 @@ export default class Landmarks {
     // 背板（避免从背面看穿）
     const back = new THREE.Mesh(
       new THREE.PlaneGeometry(3.2, 1.6),
-      new THREE.MeshStandardMaterial({ color: 0x16161f, roughness: 1 })
+      new THREE.MeshLambertMaterial({ color: 0x16161f })
     )
     back.position.set(0, 2.1, 0.08)
     back.rotation.y = Math.PI
@@ -78,10 +76,16 @@ export default class Landmarks {
     // 支架
     const pole = new THREE.Mesh(
       new THREE.CylinderGeometry(0.05, 0.05, 1.4, 8),
-      new THREE.MeshStandardMaterial({ color: 0x2a2a38, roughness: 0.8 })
+      new THREE.MeshLambertMaterial({ color: 0x2a2a38 })
     )
     pole.position.y = 0.92
     group.add(pole)
+
+    // 展台本身不动（只有 group 会转向相机），子节点可以冻结矩阵
+    for (const child of group.children) {
+      child.updateMatrix()
+      child.matrixAutoUpdate = false
+    }
 
     // 物理：底座给一个矮墙，防止角色穿过展台
     this.physics.addBox({

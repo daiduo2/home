@@ -102,6 +102,7 @@ export default class Input extends EventEmitter {
 
     document.addEventListener('pointerlockchange', () => {
       this.pointerLocked = document.pointerLockElement === this.domElement
+      if (this.pointerLocked) this.dragging = false
       this.trigger('pointerlock', { locked: this.pointerLocked })
     })
 
@@ -111,18 +112,38 @@ export default class Input extends EventEmitter {
       this.trigger('pointerlock', { locked: false })
     })
 
+    // 按住左键拖动也能转视角。
+    // 指针锁在 iframe、被嵌页面、或者用户按 Esc 之后会失效，
+    // 没有这条兜底，画面就完全转不动了 —— 这正是"视角操作有问题"的一大来源。
+    document.addEventListener('mousedown', (event) => {
+      if (!this.enabled) return
+      if (event.button === 0 && !this.touch && !this.pointerLocked) {
+        this.dragging = true
+        this.requestPointerLock()
+      }
+    })
+
+    document.addEventListener('mouseup', () => {
+      this.dragging = false
+    })
+
     document.addEventListener('mousemove', (event) => {
-      if (!this.pointerLocked || !this.enabled) return
+      if (!this.enabled) return
+      if (!this.pointerLocked && !this.dragging) return
       this.look.x -= event.movementX * this.mouseSensitivity
       this.look.y -= event.movementY * this.mouseSensitivity
     })
 
-    document.addEventListener('mousedown', (event) => {
-      if (!this.enabled) return
-      if (event.button === 0 && !this.pointerLocked && !this.touch) {
-        this.requestPointerLock()
-      }
-    })
+    // 滚轮改相机距离
+    document.addEventListener(
+      'wheel',
+      (event) => {
+        if (!this.enabled) return
+        event.preventDefault()
+        this.trigger('zoom', { delta: Math.sign(event.deltaY) * 0.7 })
+      },
+      { passive: false }
+    )
   }
 
   requestPointerLock() {

@@ -46,8 +46,11 @@ export default class World {
     const look = this.input.consumeLook()
     this.camera.applyLook(look)
 
-    this.character.update(_delta, this.input.move, look, this.camera.yaw)
-    this.camera.update(_delta, this.character)
+    // 先定朝向，角色才知道"屏幕前方"是哪儿
+    this.camera.updateAim(_delta)
+    this.character.update(_delta, this.input.move, this.camera)
+    this.camera.updatePosition(_delta, this.character)
+    this.environment.update(this.character.object.position)
 
     this.landmarks.faceCamera(this.camera.position)
     this.updateLandmarkFocus()

@@ -3,6 +3,13 @@ import * as THREE from 'three'
 /**
  * 场地骨架：地面、边界、光照、雾。
  * 只做"能走、能看"的基础结构，具体的地标和陈设由 Landmarks 与后续内容填。
+ *
+ * 性能取向（参考 brunosimon/folio-2025 的取舍）：
+ *   - 材质用 Lambert 而不是 Standard：低多边形 + 平面着色下观感几乎一样，
+ *     片元阶段便宜得多
+ *   - 只留一盏方向光 + 半球光，不要第二盏补光（每盏灯都是一次完整光照计算）
+ *   - 阴影相机跟着角色走：只覆盖脚下一小块，同样的贴图尺寸能给出更细的阴影，
+ *     需要渲染进阴影贴图的东西也少得多
  */
 export default class Environment {
   constructor(_options = {}) {
@@ -13,6 +20,8 @@ export default class Environment {
 
     this.container = new THREE.Group()
     this.container.name = 'environment'
+
+    this.sun = null
 
     this.setFloor()
     this.setBorders()
@@ -27,16 +36,17 @@ export default class Environment {
     texture.repeat.set(this.area / 2, this.area / 2)
     texture.colorSpace = THREE.SRGBColorSpace
 
-    const material = new THREE.MeshStandardMaterial({
+    const material = new THREE.MeshLambertMaterial({
       map: texture,
       color: 0xffffff,
-      roughness: 0.95,
-      metalness: 0,
     })
 
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(this.area, this.area), material)
     floor.rotation.x = -Math.PI / 2
     floor.receiveShadow = true
+    // 静态物件不用每帧重算矩阵
+    floor.updateMatrix()
+    floor.matrixAutoUpdate = false
     this.container.add(floor)
 
     this.physics.addGround()
@@ -79,10 +89,8 @@ export default class Environment {
     const height = 1.1
     const thickness = 0.5
 
-    const material = new THREE.MeshStandardMaterial({
+    const material = new THREE.MeshLambertMaterial({
       color: 0x26263a,
-      roughness: 0.9,
-      metalness: 0.1,
       flatShading: true,
     })
 
@@ -105,6 +113,8 @@ export default class Environment {
       wall.position.set(side.x, height / 2, side.z)
       wall.castShadow = true
       wall.receiveShadow = true
+      wall.updateMatrix()
+      wall.matrixAutoUpdate = false
       this.container.add(wall)
 
       const rim = new THREE.Mesh(
@@ -112,6 +122,8 @@ export default class Environment {
         rimMaterial
       )
       rim.position.set(side.x, height + 0.03, side.z)
+      rim.updateMatrix()
+      rim.matrixAutoUpdate = false
       this.container.add(rim)
 
       this.physics.addBox({
@@ -126,27 +138,28 @@ export default class Environment {
   }
 
   setLights() {
-    const hemisphere = new THREE.HemisphereLight(0xa8b8ff, 0x1c1c28, 1.7)
+    // 半球光当环境光，冷天空 + 暗地面
+    const hemisphere = new THREE.HemisphereLight(0xa8b8ff, 0x1c1c28, 1.9)
     this.container.add(hemisphere)
 
-    const sun = new THREE.DirectionalLight(0xfff2e0, 2.1)
-    sun.position.set(14, 22, 10)
+    // 一盏方向光负责阴影。强度给足，靠半球光补暗部。
+    const sun = new THREE.DirectionalLight(0xfff2e0, 2.4)
     sun.castShadow = true
-    sun.shadow.mapSize.set(2048, 2048)
+    sun.shadow.mapSize.set(1024, 1024)
     sun.shadow.camera.near = 1
-    sun.shadow.camera.far = 80
-    sun.shadow.camera.left = -30
-    sun.shadow.camera.right = 30
-    sun.shadow.camera.top = 30
-    sun.shadow.camera.bottom = -30
-    sun.shadow.bias = -0.0005
+    sun.shadow.camera.far = 60
+    // 阴影相机只覆盖角色周围一小块：贴图更细，开销也更小
+    sun.shadow.camera.left = -11
+    sun.shadow.camera.right = 11
+    sun.shadow.camera.top = 11
+    sun.shadow.camera.bottom = -11
+    sun.shadow.bias = -0.0006
+    sun.shadow.normalBias = 0.02
+    sun.shadow.camera.updateProjectionMatrix()
+
+    this.sun = sun
     this.container.add(sun)
     this.container.add(sun.target)
-
-    // 一盏冷色补光，避免阴影面全黑
-    const fill = new THREE.DirectionalLight(0x6f86ff, 0.8)
-    fill.position.set(-16, 10, -12)
-    this.container.add(fill)
   }
 
   setFog() {
@@ -155,23 +168,31 @@ export default class Environment {
     return this.fog
   }
 
+  /**
+   * 阴影相机跟着角色走。
+   * 每帧把光源和它的目标一起平移，阴影范围就跟着人走，
+   * 不用每次都把整个场地塞进阴影贴图。
+   */
+  update(_position) {
+    if (!this.sun || !_position) return
+    this.sun.position.set(_position.x + 11, _position.y + 17, _position.z + 8)
+    this.sun.target.position.set(_position.x, _position.y, _position.z)
+    this.sun.target.updateMatrixWorld()
+  }
+
   /** 质量档位：影响阴影贴图与像素比 */
   setQuality(_level) {
-    let sun = null
-    this.container.traverse((child) => {
-      if (child.isDirectionalLight && child.castShadow) sun = child
-    })
-
+    const sun = this.sun
     if (!sun) return
 
     if (_level === 'low') {
       sun.castShadow = false
     } else if (_level === 'medium') {
       sun.castShadow = true
-      sun.shadow.mapSize.set(1024, 1024)
+      sun.shadow.mapSize.set(512, 512)
     } else {
       sun.castShadow = true
-      sun.shadow.mapSize.set(2048, 2048)
+      sun.shadow.mapSize.set(1024, 1024)
     }
 
     if (sun.shadow.map) {

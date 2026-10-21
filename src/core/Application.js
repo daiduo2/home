@@ -50,19 +50,24 @@ export default class Application {
   setRenderer() {
     this.scene = new THREE.Scene()
 
+    // 高分屏上不要开 MSAA：Bruno 的做法是 pixelRatio >= 2 时用分辨率换锐度，
+    // 抗锯齿交给浏览器合成。同屏像素量能差 4 倍。
+    const pixelRatio = Math.min(window.devicePixelRatio, this.sizes.pixelRatioCap)
+
     this.renderer = new THREE.WebGLRenderer({
       canvas: this.canvas,
-      antialias: this.quality !== 'low',
+      antialias: pixelRatio < 2,
       powerPreference: 'high-performance',
       alpha: true,
     })
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.sizes.pixelRatioCap))
+    this.renderer.setPixelRatio(pixelRatio)
     this.renderer.setSize(this.sizes.viewport.width, this.sizes.viewport.height)
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.05
     this.renderer.shadowMap.enabled = true
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    // PCF 比 PCFSoft 便宜（采样次数少），阴影稍硬但更清晰
+    this.renderer.shadowMap.type = THREE.PCFShadowMap
 
     this.sizes.on('resize', () => {
       this.renderer.setSize(this.sizes.viewport.width, this.sizes.viewport.height)
@@ -109,6 +114,10 @@ export default class Application {
     this.input.on('toggleCamera', () => {
       const value = this.camera.toggleFirstPerson()
       this.interface.setCameraValue(value)
+    })
+
+    this.input.on('zoom', ({ delta }) => {
+      this.camera.zoom(delta)
     })
 
     this.interface.onQualityChange = (value) => {
@@ -201,6 +210,48 @@ export default class Application {
         `渲染器 ${this.renderer.capabilities.isWebGL2 ? 'WebGL2' : 'WebGL1'} · 画质 ${this.quality}`
       )
     }
+    this.checkPerformance()
+  }
+
+  /**
+   * 自动降级：实测帧率太低就降像素比和阴影。
+   * "太卡"这件事在不同设备上差一个数量级，写死一套画质必然有人跑不动，
+   * 所以让场景自己量自己，量到不行就退一步。
+   *
+   * 只降不升：升回去会来回抖。
+   */
+  checkPerformance() {
+    if (!this.started) return
+    if (this.quality === 'low') return
+
+    const now = performance.now()
+    if (!this.perfStart) {
+      this.perfStart = now
+      this.perfFrames = 0
+      return
+    }
+    this.perfFrames++
+
+    const elapsed = now - this.perfStart
+    if (elapsed < 3000) return
+
+    const fps = (this.perfFrames * 1000) / elapsed
+    this.perfStart = now
+    this.perfFrames = 0
+
+    if (fps >= 42) return
+
+    const next = this.quality === 'high' ? 'medium' : 'low'
+    this.quality = next
+    this.world.setQuality(next)
+    this.renderer.setPixelRatio(
+      next === 'low' ? 1 : Math.min(window.devicePixelRatio, 1.25)
+    )
+    this.renderer.shadowMap.enabled = next !== 'low'
+    this.interface.setQualityValue(next)
+    this.interface.setStats(
+      `实测 ${fps.toFixed(0)} fps，已自动降到${next === 'low' ? '低' : '中'}画质`
+    )
   }
 
   destroy() {

@@ -126,7 +126,78 @@ try {
 
   await saveScreenshot(cdp, path.join(OUT_DIR, '02-walked.png'))
 
-  // ---------- 4. 纯文字清单兜底 ----------
+  // ---------- 4. 视角：抬头要真的抬起来 ----------
+  // 之前的实现里 pitch 是用欧拉角硬转的，一抬头相机就被推到地面以下，
+  // 而且看向的点不带 pitch，画面根本不跟着抬。
+  await evaluate(cdp, `window.aufheben.camera.pitch = 0.5`)
+  await sleep(700)
+  const lookUp = await evaluate(
+    cdp,
+    `(() => {
+       const c = window.aufheben.camera
+       return {
+         dirY: c.direction.y,
+         posY: c.instance.position.y,
+         rotX: c.instance.rotation.x,
+       }
+     })()`
+  )
+  console.log(
+    `  抬头后：视线 y=${lookUp.dirY.toFixed(2)} 相机 y=${lookUp.posY.toFixed(2)} 俯仰=${lookUp.rotX.toFixed(2)}`
+  )
+  if (lookUp.dirY < 0.2) throw new Error('抬头后视线没有往上')
+  if (lookUp.posY < 0.3) throw new Error('抬头后相机掉到地面以下了')
+  // 相机绕 X 轴正转 = 抬头（相机默认朝 -Z，rotation.x 转正后 -Z 指向斜上方）
+  if (lookUp.rotX < 0.1) throw new Error('抬头后相机俯仰角没有变正')
+
+  // ---------- 5. 拖拽转视角（指针锁拿不到时的兜底） ----------
+  const yawBefore = await evaluate(cdp, `window.aufheben.camera.yaw`)
+  await evaluate(
+    cdp,
+    `document.dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true }))`
+  )
+  await evaluate(
+    cdp,
+    `document.dispatchEvent(new MouseEvent('mousemove', { movementX: 60, movementY: 0, bubbles: true }))`
+  )
+  await sleep(400)
+  const yawAfter = await evaluate(cdp, `window.aufheben.camera.yaw`)
+  await evaluate(
+    cdp,
+    `document.dispatchEvent(new MouseEvent('mouseup', { button: 0, bubbles: true }))`
+  )
+  console.log(`  拖拽转视角：yaw ${yawBefore.toFixed(2)} → ${yawAfter.toFixed(2)}`)
+  if (Math.abs(yawAfter - yawBefore) < 0.05) {
+    throw new Error('拖拽转视角没有生效')
+  }
+
+  // ---------- 6. 渲染预算 ----------
+  const render = await evaluate(
+    cdp,
+    `(() => {
+       const r = window.aufheben.renderer
+       let lights = 0
+       let shadowSize = 0
+       window.aufheben.scene.traverse((o) => {
+         if (o.isLight) lights++
+         if (o.isDirectionalLight && o.castShadow) shadowSize = o.shadow.mapSize.width
+       })
+       return {
+         calls: r.info.render.calls,
+         triangles: r.info.render.triangles,
+         lights,
+         shadowSize,
+       }
+     })()`
+  )
+  console.log(
+    `  draw calls=${render.calls} 三角形=${render.triangles} 灯=${render.lights} 阴影贴图=${render.shadowSize}`
+  )
+  if (render.calls > 60) throw new Error(`draw call 超出预算：${render.calls}`)
+  if (render.lights > 3) throw new Error(`光源太多：${render.lights}`)
+  if (render.shadowSize > 1024) throw new Error(`阴影贴图太大：${render.shadowSize}`)
+
+  // ---------- 7. 纯文字清单兜底 ----------
   const fallbackItems = await evaluate(
     cdp,
     `document.querySelectorAll('#fallbackList .fallback__item').length`
@@ -134,7 +205,7 @@ try {
   console.log(`  文字清单条目：${fallbackItems}`)
   if (fallbackItems < 1) throw new Error('文字清单兜底没有渲染内容')
 
-  // ---------- 5. 控制台错误 ----------
+  // ---------- 8. 控制台错误 ----------
   if (errors.length) {
     const unique = [...new Set(errors)]
     console.log(`\n控制台错误（去重后 ${unique.length} 条 / 共 ${errors.length} 次）：`)
