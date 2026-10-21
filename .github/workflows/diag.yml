@@ -1,0 +1,92 @@
+name: Diagnose Server
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Inspect server
+        uses: appleboy/ssh-action@v1
+        env:
+          DEPLOY_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          command_timeout: 8m
+          envs: DEPLOY_PASSWORD
+          script: |
+            echo "===== 身份 ====="
+            whoami; id
+            echo
+            echo "===== sudo 能力 ====="
+            if sudo -n true 2>/dev/null; then
+              echo "sudo -n 免密可用"
+            elif [ -n "${DEPLOY_PASSWORD:-}" ] && echo "$DEPLOY_PASSWORD" | sudo -S -p '' true 2>/dev/null; then
+              echo "sudo 需要密码（可用）"
+            else
+              echo "sudo 不可用"
+            fi
+            run_root() {
+              if sudo -n true 2>/dev/null; then
+                sudo -n "$@"
+              elif [ -n "${DEPLOY_PASSWORD:-}" ]; then
+                echo "$DEPLOY_PASSWORD" | sudo -S -p '' "$@"
+              else
+                "$@"
+              fi
+            }
+
+            echo
+            echo "===== nginx -T 全文（只看配置来源与 server 块）====="
+            run_root nginx -T 2>&1 | grep -nE '^# configuration file|server_name|listen |root |index |try_files|proxy_pass|return 30|location ' | head -60
+
+            echo
+            echo "===== 站点相关目录 ====="
+            for d in /var/www /var/www/html /var/www/home /var/www/home/dist /var/www/home/deploy; do
+              echo "--- $d ---"
+              run_root ls -la "$d" 2>&1 | head -20
+            done
+
+            echo
+            echo "===== 所有 index.html 及时间戳 ====="
+            run_root find / -xdev -maxdepth 5 -name 'index.html' -printf '%TY-%Tm-%Td %TH:%TM  %10s  %p\n' 2>/dev/null | sort | head -30
+
+            echo
+            echo "===== 旧产物落在哪 ====="
+            run_root find / -xdev -maxdepth 7 -name 'index-CfZWolIl.js' -printf '%TY-%Tm-%Td %TH:%TM  %10s  %p\n' 2>/dev/null | head -10
+            echo "--- 新产物 ---"
+            run_root find / -xdev -maxdepth 7 -name 'index-CebVgO7f.js' -printf '%TY-%Tm-%Td %TH:%TM  %10s  %p\n' 2>/dev/null | head -10
+
+            echo
+            echo "===== 不同请求形态下 nginx 返回什么 ====="
+            probe() {
+              echo "--- $1 ---"
+              shift
+              curl -sS -D - -o /tmp/_probe.html "$@" 2>&1 | grep -iE '^HTTP/|^Server:|^Content-Length:|^Last-Modified:|^ETag:|^Location:' | head -8
+              echo "  body引用: $(grep -oE 'assets/index-[A-Za-z0-9._-]+\.js' /tmp/_probe.html | head -1)  size=$(wc -c < /tmp/_probe.html)"
+            }
+            probe "Host: aufheben.top" -H "Host: aufheben.top" http://127.0.0.1/
+            probe "无 Host（HTTP/1.0）" --http1.0 http://127.0.0.1/
+            probe "Host: 服务器 IP" -H "Host: ${{ secrets.SERVER_HOST }}" http://127.0.0.1/
+            probe "Host: 别的域名" -H "Host: example.invalid" http://127.0.0.1/
+            probe "/index.html 直取" -H "Host: aufheben.top" http://127.0.0.1/index.html
+            probe "带 UA 像浏览器" -H "Host: aufheben.top" -A "Mozilla/5.0" http://127.0.0.1/
+
+            echo
+            echo "===== 监听端口 ====="
+            run_root ss -lntp 2>/dev/null | head -20
+
+            echo
+            echo "===== 站点候选 index.html 的指纹 ====="
+            for f in /var/www/index.html /var/www/html/index.html /var/www/home/dist/index.html; do
+              if run_root test -f "$f"; then
+                echo "--- $f ---"
+                run_root md5sum "$f"
+                run_root grep -oE 'assets/index-[A-Za-z0-9._-]+\.(js|css)' "$f" | head -5
+              fi
+            done
