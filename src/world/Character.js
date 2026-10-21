@@ -111,6 +111,10 @@ export default class Character {
     })
     body.fixedRotation = true
     body.updateMassProperties()
+    // 角色刚体不能休眠：cannon-es 对 SLEEPING 的刚体跳过积分，
+    // 而移动是直接写 velocity（不走 applyImpulse），不会触发唤醒。
+    // 一旦睡着，站着不动约 1 秒就再也走不了了。
+    body.allowSleep = false
     body.position.set(0, this.groundOffset + 0.05, 0)
     this.body = this.physics.addBody(body)
   }

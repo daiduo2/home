@@ -105,7 +105,14 @@ try {
 
   await saveScreenshot(cdp, path.join(OUT_DIR, '01-scene.png'))
 
-  // ---------- 3. 按 W 键前进 ----------
+  // ---------- 3. 静止一会儿再按 W ----------
+  // 必须先 idle 超过 1 秒：cannon-es 里刚体静止太久会进 SLEEPING，
+  // 而移动是直接写 velocity，不会触发唤醒，睡着了就再也走不了。
+  await sleep(1800)
+  const sleepState = await evaluate(cdp, `window.aufheben.world.character.body.sleepState`)
+  console.log(`  刚体休眠状态：${sleepState}（0=AWAKE 1=SLEEPY 2=SLEEPING）`)
+  if (sleepState !== 0) throw new Error(`角色刚体进入休眠状态 ${sleepState}，会走不动`)
+
   const before = await evaluate(cdp, `window.aufheben.world.character.body.position.z`)
   await key(cdp, 'KeyW', 'w')
   await sleep(1500)
