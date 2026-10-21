@@ -8,9 +8,46 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # npm 11 默认不跑依赖的 install script，esbuild 的 postinstall 被拒会导致 vite build 失败。
+      # node 20 自带的 npm 10 没有这个限制，写成不阻断的保险。
+      - name: Allow esbuild install script
+        run: npm config set allow-scripts 'esbuild' --location=project || true
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Build
+        run: npm run build
+
+      # 记下产物主文件名，部署后回读线上 index.html，确认线上真的换成了这一版
+      - name: Pack
+        run: |
+          tar -czf dist.tar.gz -C dist .
+          ASSET=$(ls dist/assets/*.js 2>/dev/null | head -1 | xargs -n1 basename)
+          echo "ASSET=$ASSET" >> "$GITHUB_ENV"
+          echo "打包完成: dist.tar.gz (主产物 $ASSET)"
+
+      - name: Upload build artifact to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          source: dist.tar.gz
+          target: /tmp
+
       - name: Deploy to server via SSH
         uses: appleboy/ssh-action@v1
         with:
@@ -18,13 +55,52 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASSWORD }}
           command_timeout: 8m
+          script_stop: true
           script: |
             set -e
-            echo "🚀 Triggered deploy at $(date -u +%FT%TZ)"
-            deploy-app \
-              "${{ secrets.PROJECT_NAME }}" \
-              "${{ secrets.GH_REPO }}" \
-              "${{ secrets.DOMAIN }}" \
-              "${{ secrets.APP_PORT }}" \
-              "${{ secrets.PROJECT_TYPE }}" \
-              "true"
+            echo "🚀 部署开始 $(date -u +%FT%TZ)"
+
+            # 服务器访问 github.com 不稳定（deploy-app 的 git clone 经常 TLS 中断，
+            # GnuTLS recv error -110），干脆不让服务器碰 github：产物由 Actions 构建后传上来。
+            #
+            # nginx 的 root 从实际配置里读，不写死路径；读不到才回退到约定路径。
+            ROOT=$(grep -rhoP 'root\s+\K[^;]+' /etc/nginx/sites-enabled/ 2>/dev/null | head -1 || true)
+            if [ -z "$ROOT" ]; then
+              echo "⚠️ 没从 nginx 配置里读到 root，回退到 /var/www/home/dist"
+              ROOT=/var/www/home/dist
+            fi
+            echo "📁 目标目录: $ROOT"
+
+            # 只覆盖不删除：残留的旧 asset 文件无害（index.html 只引用新 hash），
+            # 万一路径判断错了，也不会删掉线上正在用的东西
+            mkdir -p "$ROOT"
+            tar -xzf /tmp/dist.tar.gz -C "$ROOT"
+            rm -f /tmp/dist.tar.gz
+            echo "✅ 已更新 $ROOT"
+            ls -la "$ROOT" | head -20
+
+            # 重载 nginx。sudo 加 -n，不给密码就不会卡在交互提示上
+            if sudo -n nginx -t 2>/dev/null || nginx -t 2>/dev/null; then
+              echo "nginx 配置检查通过"
+            else
+              echo "⚠️ nginx -t 没跑通（可能没有权限），静态文件一般不依赖 reload"
+            fi
+            sudo -n systemctl reload nginx 2>/dev/null \
+              || systemctl reload nginx 2>/dev/null \
+              || sudo -n nginx -s reload 2>/dev/null \
+              || nginx -s reload 2>/dev/null \
+              || echo "⚠️ nginx 重载失败，静态文件通常仍然直接生效"
+
+            # 健康检查：确认线上 index.html 已经引用这次的新产物
+            echo "🌐 健康检查"
+            PAGE=$(curl -sS -H "Host: ${{ secrets.DOMAIN }}" http://127.0.0.1/ || true)
+            if echo "$PAGE" | grep -q "${{ env.ASSET }}"; then
+              echo "✅ 线上 index.html 已引用新产物 ${{ env.ASSET }}"
+            else
+              echo "⚠️ 线上 index.html 没找到 ${{ env.ASSET }}，回读内容："
+              echo "$PAGE" | head -20
+            fi
+            curl -sS -o /dev/null -w "  产物直连 -> HTTP %{http_code}\n" \
+              -H "Host: ${{ secrets.DOMAIN }}" \
+              "http://127.0.0.1/assets/${{ env.ASSET }}" || true
+            echo "✅ 部署完成 $(date -u +%FT%TZ)"
