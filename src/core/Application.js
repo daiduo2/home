@@ -3,6 +3,7 @@ import Time from './Time.js'
 import Sizes from './Sizes.js'
 import Input from './Input.js'
 import Camera from './Camera.js'
+import Vignette from './Vignette.js'
 import World from '../world/World.js'
 import Loader from '../ui/Loader.js'
 import Interface from '../ui/Interface.js'
@@ -64,10 +65,14 @@ export default class Application {
     this.renderer.setSize(this.sizes.viewport.width, this.sizes.viewport.height)
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
-    this.renderer.toneMappingExposure = 1.05
+    this.renderer.toneMappingExposure = 1.15
     this.renderer.shadowMap.enabled = true
     // PCF 比 PCFSoft 便宜（采样次数少），阴影稍硬但更清晰
     this.renderer.shadowMap.type = THREE.PCFShadowMap
+    // 阴影贴图默认每帧重算，但场景是静态的、只有角色在动。
+    // 关掉自动更新，改由 Environment 在角色真的移动时手动标脏。
+    this.renderer.shadowMap.autoUpdate = false
+    this.renderer.shadowMap.needsUpdate = true
 
     this.sizes.on('resize', () => {
       this.renderer.setSize(this.sizes.viewport.width, this.sizes.viewport.height)
@@ -76,9 +81,10 @@ export default class Application {
   }
 
   setScene() {
-    // 天空不画在 canvas 里，交给 CSS 渐变：零成本，且雾色能和背景对上
+    // 天空不画在 canvas 里，交给场景里的渐变天球：
+    // 雾色必须和天际线色一致，用 CSS 渐变当背景的话两者对不上，
+    // 远处地面和天空之间会出现一条硬边。
     this.scene.background = null
-    this.scene.fog = new THREE.Fog(0x14142e, 34, 96)
   }
 
   setCamera() {
@@ -86,6 +92,18 @@ export default class Application {
       sizes: this.sizes,
       time: this.time,
     })
+
+    // 相机要进场景图：暗角是挂在相机上的全屏 quad，
+    // 相机不在场景图里，它就不会被渲染。
+    this.scene.add(this.camera.instance)
+
+    // 暗角：挂相机的一个全屏 quad，不走后处理。
+    // 1 个 draw call 的代价，比 EffectComposer 便宜一个数量级。
+    // 浓度要克制：暗角是为了收视线，不是为了把四角糊掉。
+    // 0.72 时画面下缘已经被压到接近全黑，地面细节全看不见了 ——
+    // 而画面下缘恰恰是离相机最近的地面，最该看清。
+    this.vignette = new Vignette({ camera: this.camera.instance, darkness: 0.55 })
+    this.camera.instance.add(this.vignette.mesh)
   }
 
   setWorld() {
@@ -95,11 +113,15 @@ export default class Application {
       camera: this.camera,
       input: this.input,
       events: this.events,
+      renderer: this.renderer,
     })
     this.world.physics = this.world.physics
     this.camera.physics = this.world.physics
     this.scene.add(this.world.container)
     this.world.setQuality(this.quality)
+
+    // 雾由环境统一给：色值必须和天球的地平线色是同一个
+    this.scene.fog = this.world.environment.fog
   }
 
   setEvents() {
@@ -202,6 +224,7 @@ export default class Application {
     }
 
     this.world.update(this.time.delta)
+    this.vignette.update(this.time.elapsed)
     this.renderer.render(this.scene, this.camera.instance)
 
     this.frameCount++
@@ -257,6 +280,7 @@ export default class Application {
   destroy() {
     this.time.destroy()
     this.world.destroy()
+    this.vignette.dispose()
     this.renderer.dispose()
   }
 }

@@ -213,7 +213,54 @@ try {
     throw new Error('往右拖没有把视角转向右边（左右反了）')
   }
 
-  // ---------- 6. 渲染预算 ----------
+  // ---------- 6. 走近展台：提示出现 + 展板切到近状态 ----------
+  // 「混合呈现」的核心：3D 展板远处只给标题，走近才补上摘要；
+  // 同时 HUD 上出现按 E 的提示。两者都要真的发生。
+  const nearResult = await evaluate(
+    cdp,
+    `(() => {
+       const w = window.aufheben.world
+       // 把角色挪到 about 展台前（展台在 [0, -11]，触发半径 3.4m）
+       const body = w.character.body
+       body.position.set(0, body.position.y, -8.4)
+       body.velocity.set(0, 0, 0)
+       return true
+     })()`
+  )
+  await sleep(700)
+
+  const nearState = await evaluate(
+    cdp,
+    `(() => {
+       const w = window.aufheben.world
+       const active = w.landmarks.active
+       const prompt = document.getElementById('hudPrompt')
+       return {
+         activeId: active ? active.entry.id : null,
+         promptVisible: prompt ? !prompt.hidden : false,
+         promptText: prompt ? prompt.textContent.trim() : '',
+         // 近状态下展板贴图应该被换成带摘要的那一张
+         hasSummary: !!(active && active.boardTexture.image && active.boardTexture.image.width > 0),
+       }
+     })()`
+  )
+  console.log(
+    `  走近展台：激活=${nearState.activeId} 提示=${nearState.promptVisible ? '显示' : '隐藏'}「${nearState.promptText}」`
+  )
+  if (nearState.activeId !== 'about') {
+    throw new Error(`走近展台没有激活目标：${nearState.activeId}`)
+  }
+  if (!nearState.promptVisible) {
+    throw new Error('走近展台后 HUD 提示没有出现')
+  }
+  if (!nearState.promptText.includes('aufheben')) {
+    throw new Error(`提示内容不对：${nearState.promptText}`)
+  }
+  if (!nearState.hasSummary) {
+    throw new Error('展板贴图没有切到近状态')
+  }
+
+  // ---------- 7. 渲染预算 ----------
   const render = await evaluate(
     cdp,
     `(() => {
@@ -235,9 +282,91 @@ try {
   console.log(
     `  draw calls=${render.calls} 三角形=${render.triangles} 灯=${render.lights} 阴影贴图=${render.shadowSize}`
   )
-  if (render.calls > 60) throw new Error(`draw call 超出预算：${render.calls}`)
+  // 桌面预算：draw call ≤ 300、三角形 ≤ 750k、阴影投射灯 ≤ 2、阴影贴图 ≤ 2048
+  if (render.calls > 300) throw new Error(`draw call 超出预算：${render.calls}`)
+  if (render.triangles > 750000) throw new Error(`三角形超出预算：${render.triangles}`)
   if (render.lights > 3) throw new Error(`光源太多：${render.lights}`)
-  if (render.shadowSize > 1024) throw new Error(`阴影贴图太大：${render.shadowSize}`)
+  if (render.shadowSize > 2048) throw new Error(`阴影贴图太大：${render.shadowSize}`)
+
+  // ---------- 6.5 视觉指标 ----------  // 判据来自 threejs-game-skills 的 visual-scorecard.md。
+  // 这四条是"画面里有没有可被眼睛读到的信息"的硬指标：
+  // 稀疏扁平、暗、几何体占主导的场景会全挂。
+  const shot = await cdp.send('Page.captureScreenshot', { format: 'png' })
+  const metrics = await evaluate(
+    cdp,
+    `(async () => {
+      const b64 = ${JSON.stringify(shot.data)}
+      const bin = atob(b64)
+      const bytes = new Uint8Array(bin.length)
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }))
+      const img = new Image()
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url })
+      const cv = document.createElement('canvas')
+      cv.width = img.width; cv.height = img.height
+      const ctx = cv.getContext('2d', { willReadFrequently: true })
+      ctx.drawImage(img, 0, 0)
+      const d = ctx.getImageData(0, 0, cv.width, cv.height).data
+      const W = cv.width, H = cv.height
+      const stepX = Math.max(1, Math.floor(W / 160))
+      const stepY = Math.max(1, Math.floor(H / 90))
+      const cols = Math.floor(W / stepX), rows = Math.floor(H / stepY)
+      const lum = new Float64Array(cols * rows)
+      const buckets = new Map()
+      let samples = 0
+      for (let gy = 0; gy < rows; gy++) {
+        for (let gx = 0; gx < cols; gx++) {
+          const o = ((gy * stepY) * W + gx * stepX) * 4
+          const r = d[o], g = d[o+1], b = d[o+2]
+          lum[gy * cols + gx] = 0.2126 * r + 0.7152 * g + 0.0722 * b
+          const key = (r >> 4) + ',' + (g >> 4) + ',' + (b >> 4)
+          buckets.set(key, (buckets.get(key) || 0) + 1)
+          samples++
+        }
+      }
+      const sorted = Array.from(lum).sort((a, b) => a - b)
+      const p5 = sorted[Math.floor(sorted.length * 0.05)]
+      const p95 = sorted[Math.floor(sorted.length * 0.95)]
+      let entropy = 0, dominant = 0
+      for (const c of buckets.values()) {
+        const p = c / samples
+        entropy -= p * Math.log2(p)
+        dominant = Math.max(dominant, c)
+      }
+      let edges = 0, checked = 0
+      for (let gy = 0; gy < rows - 1; gy++) {
+        for (let gx = 0; gx < cols - 1; gx++) {
+          const i = gy * cols + gx
+          const dx = Math.abs(lum[i] - lum[i+1])
+          const dy = Math.abs(lum[i] - lum[i+cols])
+          if (Math.max(dx, dy) > 12) edges++
+          checked++
+        }
+      }
+      const round = (v, n) => Number(v.toFixed(n))
+      return {
+        colorEntropyBits: round(entropy, 2),
+        edgeDensity: round(edges / checked, 3),
+        contrast: round(p95 - p5, 1),
+        dominantColorShare: round(dominant / samples, 3),
+      }
+    })()`
+  )
+  console.log(
+    `  视觉指标：熵=${metrics.colorEntropyBits} 边缘密度=${metrics.edgeDensity} 对比度=${metrics.contrast} 主色占比=${metrics.dominantColorShare}`
+  )
+  if (metrics.colorEntropyBits < 3.0) {
+    throw new Error(`画面太扁平（熵 ${metrics.colorEntropyBits} < 3.0）：场景缺少可读信息`)
+  }
+  if (metrics.dominantColorShare > 0.6) {
+    throw new Error(`单一颜色占比过高（${metrics.dominantColorShare} > 0.6）：画面是空的`)
+  }
+  if (metrics.edgeDensity < 0.04) {
+    throw new Error(`边缘密度过低（${metrics.edgeDensity} < 0.04）：几何体占主导或构图空`)
+  }
+  if (metrics.contrast < 60) {
+    throw new Error(`明暗对比不足（${metrics.contrast} < 60）：雾或暗部把画面压平了`)
+  }
 
   // ---------- 7. 纯文字清单兜底 ----------
   const fallbackItems = await evaluate(

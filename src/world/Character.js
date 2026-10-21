@@ -1,5 +1,7 @@
 import * as THREE from 'three'
 import * as CANNON from 'cannon-es'
+import { material } from '../core/Palette.js'
+import { createBlobShadowTexture } from '../utils/textures.js'
 
 const UP = new THREE.Vector3(0, 1, 0)
 
@@ -26,6 +28,10 @@ export default class Character {
     this.radius = 0.42
     this.height = 1.75
 
+    // 出生点。以前这里写死 (0, 0)，而场地数据里的 SPAWN 是另一个点 ——
+    // 结果是玩家站在路中间，路却从十米外开始。出生点必须是唯一来源。
+    this.spawn = _options.spawn || { x: 0, z: 0 }
+
     this.walkSpeed = 4.2
     this.runSpeed = 7.0
     this.acceleration = 28
@@ -44,20 +50,12 @@ export default class Character {
     this.object = new THREE.Group()
     this.object.name = 'character'
 
-    // 材质用 Lambert 而不是 Standard：低多边形 + 平面着色下观感几乎一样，
-    // 但片元阶段便宜得多（没有 BRDF、没有 roughness/metalness 分支）
-    const skin = new THREE.MeshLambertMaterial({
-      color: 0xf5d0b0,
-      flatShading: true,
-    })
-    const shirt = new THREE.MeshLambertMaterial({
-      color: 0x6366f1,
-      flatShading: true,
-    })
-    const pants = new THREE.MeshLambertMaterial({
-      color: 0x2b2b3a,
-      flatShading: true,
-    })
+    // 材质用卡通明暗（Toon + 渐变贴图），和场景其它部分同一套语言。
+    // 角色是画面里唯一一直在动的东西，也是玩家唯一会盯着看的东西，
+    // 所以用最亮的一档：骨白的上衣 + 深紫的裤子，在暗地面上跳出来。
+    const skin = material('bodyPrimary', { color: 0xe0b894 })
+    const shirt = material('decalLight', { color: 0xe6dcc8 })
+    const pants = material('bodySecondary', { color: 0x3a3346 })
 
     // 躯干
     const torso = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.72, 0.3), shirt)
@@ -73,7 +71,7 @@ export default class Character {
     // 朝向标记：低多边形脑袋是正反不分的，加个鼻子才知道角色面朝哪
     const face = new THREE.Mesh(
       new THREE.ConeGeometry(0.06, 0.16, 3),
-      new THREE.MeshStandardMaterial({ color: 0x2f2320, roughness: 0.9, flatShading: true })
+      material('decalDark', { color: 0x2f2320 })
     )
     face.rotation.x = Math.PI / 2
     face.position.set(0, 1.62, 0.19)
@@ -107,6 +105,28 @@ export default class Character {
         child.receiveShadow = true
       }
     })
+
+    // 脚下的假接触阴影。
+    // 阴影贴图覆盖 52m 见方，角色的影子在贴图里只有几十个像素，边缘是硬的、会飘。
+    // 补一张软的接触阴影把角色"钉"在地上 —— 1 个 draw call，
+    // 但没有它角色就像浮在地面上。
+    this.blobTexture = createBlobShadowTexture({ inner: 0.22, outer: 0.5 })
+    const blobGeometry = new THREE.CircleGeometry(0.62, 24)
+    blobGeometry.rotateX(-Math.PI / 2)
+    this.blob = new THREE.Mesh(
+      blobGeometry,
+      new THREE.MeshBasicMaterial({
+        map: this.blobTexture,
+        transparent: true,
+        depthWrite: false,
+        opacity: 0.62,
+      })
+    )
+    this.blob.position.y = 0.03
+    this.blob.renderOrder = 1
+    this.blob.castShadow = false
+    this.blob.receiveShadow = false
+    this.object.add(this.blob)
   }
 
   setBody() {
@@ -123,7 +143,7 @@ export default class Character {
     // 而移动是直接写 velocity（不走 applyImpulse），不会触发唤醒。
     // 一旦睡着，站着不动约 1 秒就再也走不了了。
     body.allowSleep = false
-    body.position.set(0, this.groundOffset + 0.05, 0)
+    body.position.set(this.spawn.x, this.groundOffset + 0.05, this.spawn.z)
     this.body = this.physics.addBody(body)
   }
 
@@ -215,6 +235,7 @@ export default class Character {
   }
 
   destroy() {
+    this.blobTexture.dispose()
     this.object.traverse((child) => {
       if (child.isMesh) {
         child.geometry.dispose()

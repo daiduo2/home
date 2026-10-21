@@ -27,22 +27,28 @@ export default class Camera {
 
     // 目标角度：输入直接改这两个
     this.yaw = 0
-    this.pitch = -0.5
+    // 俯角要浅。之前用 -0.5（俯视 28°），画面里全是地面，天际线根本进不来，
+    // 雾色也就没机会和天空接上。-0.10（6°）能让地平线落在画面上方约 1/5 处，
+    // 同时不至于让前景空地占掉半张画面。
+    this.pitch = -0.1
 
     // 实际使用的角度：阻尼平滑后的结果
     this.smoothYaw = 0
-    this.smoothPitch = -0.5
+    this.smoothPitch = -0.1
 
-    // 远景：角色只是大场景里的小人，相机拉远抬高
-    this.distance = 21
-    this.currentDistance = 21
+    // 远景：角色只是大场景里的小人，相机拉远抬高。
+    // 21m / FOV 30 时角色还占了画面将近十分之一高，看起来像越肩视角；
+    // 24m / FOV 32 把它压到八分之一左右，四周的地形和展台才有存在感。
+    // 但不能再远了：相机在角色身后 24m，出生点离边界墙只有 9m 余量，
+    // 再拉远相机就要跑到墙外去了。
+    this.distance = 24
+    this.currentDistance = 24
     this.minDistance = 6
     this.maxDistance = 46
 
     // pitch > 0 抬头，< 0 低头。
-    // 远景机位下基本是俯视：抬头到 0.35 就够了，再高相机会往地面以下钻。
-    this.minPitch = -1.05
-    this.maxPitch = 0.35
+    this.minPitch = -0.95
+    this.maxPitch = 0.45
 
     this.height = 1.45
     this.lookAhead = 1.2
@@ -57,10 +63,10 @@ export default class Camera {
     this.right = new THREE.Vector3(1, 0, 0)
 
     this.instance = new THREE.PerspectiveCamera(
-      28,
+      32,
       this.sizes.viewport.width / this.sizes.viewport.height,
       0.1,
-      260
+      400
     )
 
     this._target = new THREE.Vector3()

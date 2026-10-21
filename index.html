@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="description" content="aufheben — 一个能走进去的 3D 个人主页：作品、实验、还在做的事，走到展台前才看得见。" />
-  <meta name="theme-color" content="#0a0a0f" />
+  <meta name="theme-color" content="#15121c" />
   <title>aufheben</title>
   <link rel="stylesheet" href="/src/style.css" />
 </head>
@@ -36,12 +36,7 @@
     </div>
 
     <div class="hud__corner hud__corner--bl">
-      <div class="hud__keys" id="hudKeys">
-        <span><b>WASD</b> 移动</span>
-        <span><b>鼠标</b> 转视角</span>
-        <span><b>E</b> 查看</span>
-        <span><b>Tab</b> 文字清单</span>
-      </div>
+      <div class="hud__keys" id="hudKeys" hidden></div>
     </div>
 
     <div class="hud__corner hud__corner--br">
@@ -86,6 +81,14 @@
       <div class="panel__row">
         <label for="cameraToggle">第一人称视角</label>
         <input type="checkbox" id="cameraToggle" />
+      </div>
+      <div class="panel__keys" id="panelKeys">
+        <span><b>WASD / 方向键</b> 移动</span>
+        <span><b>鼠标</b> 转视角（也可按住左键拖动）</span>
+        <span><b>滚轮</b> 拉近拉远</span>
+        <span><b>E</b> 查看展台</span>
+        <span><b>Tab</b> 文字清单</span>
+        <span><b>Esc</b> 关闭面板</span>
       </div>
       <p class="panel__note" id="statsNote"></p>
     </div>

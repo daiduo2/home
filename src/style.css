@@ -1,16 +1,17 @@
 /* ============================================================
    aufheben — 可交互 3D 个人主页
-   设计基调：深色底 + 高饱和点缀，低多边形场景的互补色
+   设计基调：黄昏暖橙的天际线 + 冷紫的地面，低多边形 + 卡通明暗
+   色值与 src/core/Palette.js 保持一致
    ============================================================ */
 
 :root {
-  --bg: #0a0a0f;
-  --bg-soft: #12121a;
-  --ink: #f0f0f0;
-  --ink-dim: #a1a1aa;
-  --ink-faint: #52525b;
-  --primary: #6366f1;
-  --accent: #22d3ee;
+  --bg: #15121c;
+  --bg-soft: #241f2e;
+  --ink: #f2e7d3;
+  --ink-dim: #a89c8c;
+  --ink-faint: #6f6558;
+  --primary: #e8c88a;
+  --accent: #7fa8c9;
   --hot: #f472b6;
   --line: rgba(255, 255, 255, 0.12);
   --panel-bg: rgba(18, 18, 26, 0.94);
@@ -38,10 +39,11 @@ body {
   overscroll-behavior: none;
 }
 
-/* 天空：画在 canvas 背后，three 只渲染 3D 部分 */
+/* 天空：画在 canvas 背后，three 只渲染 3D 部分。
+   这层只是为了加载瞬间不闪白，真正渲染时由场景里的渐变天球接管，
+   两边的色值必须对得上（见 src/core/Palette.js）。 */
 body {
-  background:
-    radial-gradient(130% 85% at 50% -10%, #2b2358 0%, #171740 34%, #0d0d1c 68%, #08080f 100%);
+  background: linear-gradient(180deg, #1b2542 0%, #5c4a68 52%, #d08a5e 100%);
 }
 
 body {
@@ -232,6 +234,28 @@ input {
 .hud__keys b {
   color: var(--ink-dim);
   font-weight: 500;
+}
+
+/* 键位说明放在设置面板里，不常驻在画面上。
+   常驻的键位表会把画面下半部分占掉，而且它解释的是
+   本来就应该用交互形态表达的东西。 */
+.panel__keys {
+  display: grid;
+  gap: 6px;
+  margin: 16px 0 4px;
+  padding: 14px 16px;
+  border: 1px solid rgba(242, 231, 211, 0.1);
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-faint);
+  letter-spacing: 0.04em;
+}
+
+.panel__keys b {
+  color: var(--ink-dim);
+  font-weight: 500;
+  margin-right: 6px;
 }
 
 .hud__prompt {
