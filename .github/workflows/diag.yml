@@ -46,6 +46,22 @@ jobs:
             run_root nginx -T 2>&1 | grep -nE '^# configuration file|server_name|listen |root |index |try_files|proxy_pass|return 30|location ' | head -60
 
             echo
+            echo "===== 找 bailu ====="
+            run_root grep -rn -i 'bailu' /etc/nginx/ 2>/dev/null | head -20
+            run_root find / -xdev -maxdepth 5 -iname '*bailu*' -not -path '*/node_modules/*' 2>/dev/null | head -20
+            echo "--- 各端口在服务什么 ---"
+            for p in 80 443 3000 3492 8080; do
+              echo "=== port $p ==="
+              run_root curl -sS -o /tmp/_p.html -w "  code=%{http_code} size=%{size_download}\n" "http://127.0.0.1:$p/" 2>&1 | head -3
+              run_root grep -oE '<title>[^<]*</title>' /tmp/_p.html 2>/dev/null | head -2
+            done
+            echo "--- /var/www/index.html 内容 ---"
+            run_root head -c 400 /var/www/index.html 2>/dev/null
+            echo ""
+            echo "--- story2 部署目录 ---"
+            run_root ls -la /opt/story2/public 2>/dev/null | head -15
+
+            echo
             echo "===== vhost 原文 ====="
             for f in /etc/nginx/sites-enabled/home /etc/nginx/sites-enabled/default; do
               echo "---------- $f ----------"
